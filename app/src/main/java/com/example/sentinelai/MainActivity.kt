@@ -310,7 +310,28 @@ fun AppDetailScreen(app: AppInfo, onBack: () -> Unit) {
                     color = Color.Red
                 )
             }
+            Spacer(modifier = Modifier.height(20.dp))
 
+            Text(
+                text = "Recommendations",
+                style = MaterialTheme.typography.titleMedium
+            )
+
+            Divider(modifier = Modifier.padding(vertical = 8.dp))
+
+            val advice = MitigationAdvisor.getRecommendations(app.permissions)
+
+            if (advice.isEmpty()) {
+
+                Text("No mitigation needed")
+
+            } else {
+
+                advice.forEach {
+
+                    Text(" $it")
+                }
+            }
             Spacer(modifier = Modifier.height(30.dp))
 
             Button(onClick = onBack) {

@@ -1,5 +1,5 @@
 package com.example.sentinelai
-
+import kotlinx.coroutines.delay
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
@@ -9,33 +9,31 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.ui.platform.LocalContext
-//import androidx.compose.ui.graphics.painter.rememberDrawablePainter
+import androidx.compose.ui.Alignment
 import androidx.compose.foundation.Image
 import androidx.compose.runtime.remember
-//import androidx.compose.ui.unit.dp
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.asImageBitmap
-//import androidx.compose.foundation.Image
-//import androidx.compose.ui.platform.LocalContext
-//import androidx.compose.ui.unit.dp
+
 @Composable
 fun HomeScreen(apps: List<AppInfo>, modifier: Modifier) {
 
+    var scanning by remember { mutableStateOf(false) }
+    var scanComplete by remember { mutableStateOf(false) }
+
     val privacyScore = calculatePrivacyScore(apps)
 
-    val highRiskApps =
-        apps.count { it.securityScore < 70 }
+    val highRiskApps = apps.count { it.securityScore < 70 }
 
-    val suspiciousApps =
-        SuspiciousAppDetector.detect(apps)
+    val suspiciousApps = SuspiciousAppDetector.detect(apps)
 
     Column(
-        modifier = modifier
-            .padding(20.dp)
+        modifier = modifier.padding(20.dp)
     ) {
 
         Text(
@@ -49,29 +47,81 @@ fun HomeScreen(apps: List<AppInfo>, modifier: Modifier) {
 
         Spacer(modifier = Modifier.height(20.dp))
 
-        QuickStats(apps.size, highRiskApps, suspiciousApps.size)
+        Button(
+            onClick = {
+
+                scanning = true
+                scanComplete = false
+
+            },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+
+            Text("Scan Device")
+        }
 
         Spacer(modifier = Modifier.height(20.dp))
 
-        Text(
-            text = "Risk Distribution",
-            style = MaterialTheme.typography.titleMedium
-        )
+        if (scanning) {
+
+            ScanAnimation {
+
+                scanning = false
+                scanComplete = true
+            }
+        }
+
+        if (scanComplete) {
+
+            QuickStats(apps.size, highRiskApps, suspiciousApps.size)
+
+            Spacer(modifier = Modifier.height(20.dp))
+
+            Text(
+                text = "Risk Distribution",
+                style = MaterialTheme.typography.titleMedium
+            )
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            RiskDistributionChart(apps)
+        }
+    }
+}
+@Composable
+fun ScanAnimation(onFinish: () -> Unit) {
+
+    var progress by remember { mutableStateOf(0f) }
+
+    LaunchedEffect(Unit) {
+
+        for (i in 1..100) {
+
+            delay(20)
+            progress = i / 100f
+        }
+
+        onFinish()
+    }
+
+    Column {
+
+        Text("Scanning apps...")
 
         Spacer(modifier = Modifier.height(10.dp))
 
-        RiskDistributionChart(apps)
+        LinearProgressIndicator(
+            progress = progress,
+            modifier = Modifier.fillMaxWidth()
+        )
     }
 }
 @Composable
 fun PrivacyScoreCard(score: Int) {
 
     val color = when {
-
         score > 85 -> Color(0xFF4CAF50)
-
         score > 70 -> Color(0xFFFFC107)
-
         else -> Color.Red
     }
 
@@ -80,7 +130,9 @@ fun PrivacyScoreCard(score: Int) {
     ) {
 
         Column(
-            modifier = Modifier.padding(20.dp)
+            modifier = Modifier
+                .padding(20.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
 
             Text(
@@ -88,13 +140,24 @@ fun PrivacyScoreCard(score: Int) {
                 style = MaterialTheme.typography.titleMedium
             )
 
-            Spacer(modifier = Modifier.height(10.dp))
+            Spacer(modifier = Modifier.height(20.dp))
 
-            Text(
-                text = "$score / 100",
-                style = MaterialTheme.typography.headlineLarge,
-                color = color
-            )
+            Box(
+                contentAlignment = Alignment.Center
+            ) {
+
+                CircularProgressIndicator(
+                    progress = score / 100f,
+                    strokeWidth = 10.dp,
+                    color = color,
+                    modifier = Modifier.size(120.dp)
+                )
+
+                Text(
+                    text = "$score",
+                    style = MaterialTheme.typography.headlineMedium
+                )
+            }
         }
     }
 }
