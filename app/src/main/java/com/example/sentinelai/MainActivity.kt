@@ -52,7 +52,7 @@ fun SentinelDashboard(apps: List<AppInfo>) {
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("SentinelAI Security Scanner") }
+                title = { Text("SentinelNet Security Scanner") }
             )
         }
     ) { padding ->
