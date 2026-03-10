@@ -295,6 +295,11 @@ fun AppDetailScreen(app: AppInfo, onBack: () -> Unit) {
 
                     Spacer(modifier = Modifier.height(6.dp))
                 }
+            Spacer(modifier = Modifier.height(20.dp))
+
+            PermissionInteractionGraph(app.permissions.distinct())
+
+            Spacer(modifier = Modifier.height(20.dp))
 
             Spacer(modifier = Modifier.height(20.dp))
 
