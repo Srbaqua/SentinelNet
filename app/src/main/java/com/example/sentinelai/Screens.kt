@@ -8,17 +8,34 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Sort
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Alignment
 import androidx.compose.foundation.Image
-import androidx.compose.runtime.remember
+import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.asImageBitmap
+import com.example.sentinelai.ui.theme.CalmDanger
+import com.example.sentinelai.ui.theme.CalmSuccess
+import com.example.sentinelai.ui.theme.CalmWarning
+import com.example.sentinelai.data.scan.ScanEntity
+import com.example.sentinelai.data.scan.ScanRepository
+import kotlinx.coroutines.launch
+import android.net.Uri
+import android.provider.Settings
 
 @Composable
 fun HomeScreen(apps: List<AppInfo>, modifier: Modifier) {
@@ -31,6 +48,9 @@ fun HomeScreen(apps: List<AppInfo>, modifier: Modifier) {
     val highRiskApps = apps.count { it.securityScore < 70 }
 
     val suspiciousApps = SuspiciousAppDetector.detect(apps)
+    val context = LocalContext.current
+    val scanRepo = remember(context) { ScanRepository.from(context) }
+    val scope = rememberCoroutineScope()
 
     Column(
         modifier = modifier.padding(20.dp)
@@ -68,6 +88,17 @@ fun HomeScreen(apps: List<AppInfo>, modifier: Modifier) {
 
                 scanning = false
                 scanComplete = true
+
+                scope.launch {
+                    val scan = ScanEntity(
+                        timestampEpochMs = System.currentTimeMillis(),
+                        privacyScore = privacyScore,
+                        appsScanned = apps.size,
+                        highRiskApps = highRiskApps,
+                        suspiciousApps = suspiciousApps.size,
+                    )
+                    scanRepo.insert(scan)
+                }
             }
         }
 
@@ -120,9 +151,9 @@ fun ScanAnimation(onFinish: () -> Unit) {
 fun PrivacyScoreCard(score: Int) {
 
     val color = when {
-        score > 85 -> Color(0xFF4CAF50)
-        score > 70 -> Color(0xFFFFC107)
-        else -> Color.Red
+        score > 85 -> CalmSuccess
+        score > 70 -> CalmWarning
+        else -> CalmDanger
     }
 
     Card(
@@ -216,11 +247,9 @@ fun ModernAppCard(
 
     val scoreColor = when {
 
-        app.securityScore > 85 -> Color(0xFF4CAF50)
-
-        app.securityScore > 70 -> Color(0xFFFFC107)
-
-        else -> Color(0xFFF44336)
+        app.securityScore > 85 -> CalmSuccess
+        app.securityScore > 70 -> CalmWarning
+        else -> CalmDanger
     }
 
     Card(
@@ -294,43 +323,168 @@ fun AppIcon(packageName: String) {
     }
 }
 @Composable
-fun AppsScreen(apps: List<AppInfo>, modifier: Modifier) {
+@OptIn(ExperimentalMaterial3Api::class)
+fun AppsScreen(
+    apps: List<AppInfo>,
+    modifier: Modifier,
+    onAppSelected: (AppInfo) -> Unit = {},
+) {
+    var query by rememberSaveable { mutableStateOf("") }
+    var riskFilter by rememberSaveable { mutableStateOf(AppRiskFilter.All) }
+    var sort by rememberSaveable { mutableStateOf(AppSort.NameAsc) }
+    var sortMenuOpen by remember { mutableStateOf(false) }
 
-    var selectedApp by remember { mutableStateOf<AppInfo?>(null) }
+    val filtered = remember(apps, query, riskFilter, sort) {
+        val q = query.trim().lowercase()
+        val base = apps.asSequence()
+            .filter { app ->
+                if (q.isBlank()) true
+                else app.appName.lowercase().contains(q) || app.packageName.lowercase().contains(q)
+            }
+            .filter { app ->
+                when (riskFilter) {
+                    AppRiskFilter.All -> true
+                    AppRiskFilter.Safe -> app.securityScore > 85
+                    AppRiskFilter.Medium -> app.securityScore in 70..85
+                    AppRiskFilter.High -> app.securityScore < 70
+                }
+            }
+            .toList()
 
-    if (selectedApp != null) {
-
-        AppDetailScreen(selectedApp!!) {
-
-            selectedApp = null
+        when (sort) {
+            AppSort.NameAsc -> base.sortedBy { it.appName.lowercase() }
+            AppSort.NameDesc -> base.sortedByDescending { it.appName.lowercase() }
+            AppSort.RiskHighToLow -> base.sortedBy { it.securityScore }
+            AppSort.RiskLowToHigh -> base.sortedByDescending { it.securityScore }
         }
-
-        return
     }
 
     LazyColumn(
-        modifier = modifier.padding(16.dp)
+        modifier = modifier.padding(horizontal = 16.dp, vertical = 12.dp)
     ) {
 
         item {
 
             Text(
                 text = "Installed Apps",
-                style = MaterialTheme.typography.headlineMedium
+                style = MaterialTheme.typography.headlineSmall
             )
 
-            Spacer(modifier = Modifier.height(16.dp))
-        }
+            Spacer(modifier = Modifier.height(12.dp))
 
-        items(apps) { app ->
+            OutlinedTextField(
+                value = query,
+                onValueChange = { query = it },
+                modifier = Modifier.fillMaxWidth(),
+                leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
+                singleLine = true,
+                placeholder = { Text("Search apps or package…") },
+            )
 
-            ModernAppCard(app) {
+            Spacer(modifier = Modifier.height(12.dp))
 
-                selectedApp = it
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(
+                        selected = riskFilter == AppRiskFilter.All,
+                        onClick = { riskFilter = AppRiskFilter.All },
+                        label = { Text("All") },
+                    )
+                    FilterChip(
+                        selected = riskFilter == AppRiskFilter.Safe,
+                        onClick = { riskFilter = AppRiskFilter.Safe },
+                        label = { Text("Safe") },
+                    )
+                    FilterChip(
+                        selected = riskFilter == AppRiskFilter.Medium,
+                        onClick = { riskFilter = AppRiskFilter.Medium },
+                        label = { Text("Medium") },
+                    )
+                    FilterChip(
+                        selected = riskFilter == AppRiskFilter.High,
+                        onClick = { riskFilter = AppRiskFilter.High },
+                        label = { Text("High") },
+                    )
+                }
+
+                Box {
+                    IconButton(onClick = { sortMenuOpen = true }) {
+                        Icon(Icons.Filled.Sort, contentDescription = "Sort")
+                    }
+                    DropdownMenu(
+                        expanded = sortMenuOpen,
+                        onDismissRequest = { sortMenuOpen = false },
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("Name (A → Z)") },
+                            onClick = { sort = AppSort.NameAsc; sortMenuOpen = false },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Name (Z → A)") },
+                            onClick = { sort = AppSort.NameDesc; sortMenuOpen = false },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Risk (High → Low)") },
+                            onClick = { sort = AppSort.RiskHighToLow; sortMenuOpen = false },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Risk (Low → High)") },
+                            onClick = { sort = AppSort.RiskLowToHigh; sortMenuOpen = false },
+                        )
+                    }
+                }
             }
 
             Spacer(modifier = Modifier.height(12.dp))
         }
+
+        if (filtered.isEmpty()) {
+            item {
+                EmptyState(
+                    title = "No matches",
+                    message = "Try a different search or loosen filters.",
+                )
+            }
+        } else {
+            itemsIndexed(filtered, key = { _, app -> app.packageName }) { idx, app ->
+                ModernAppCard(app) { onAppSelected(it) }
+                if (idx != filtered.lastIndex) {
+                    Spacer(modifier = Modifier.height(12.dp))
+                } else {
+                    Spacer(modifier = Modifier.height(24.dp))
+                }
+            }
+        }
+    }
+}
+
+private enum class AppRiskFilter { All, Safe, Medium, High }
+
+private enum class AppSort { NameAsc, NameDesc, RiskHighToLow, RiskLowToHigh }
+
+@Composable
+private fun EmptyState(
+    title: String,
+    message: String,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(top = 24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text(title, style = MaterialTheme.typography.titleMedium)
+        Spacer(modifier = Modifier.height(6.dp))
+        Text(
+            message,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 @Composable
@@ -380,6 +534,7 @@ fun SecurityScoreBadge(score: Int, color: Color) {
 fun ThreatsScreen(apps: List<AppInfo>, modifier: Modifier) {
 
     val suspiciousApps = SuspiciousAppDetector.detect(apps)
+    val context = LocalContext.current
 
     Column(
         modifier = modifier.padding(16.dp)
@@ -396,7 +551,7 @@ fun ThreatsScreen(apps: List<AppInfo>, modifier: Modifier) {
 
             Text(
                 text = "No threats detected",
-                color = Color(0xFF4CAF50)
+                color = CalmSuccess
             )
 
         } else {
@@ -408,7 +563,19 @@ fun ThreatsScreen(apps: List<AppInfo>, modifier: Modifier) {
                     val app = pair.first
                     val reason = pair.second
 
-                    ThreatCard(app.appName, reason)
+                    ThreatCard(
+                        appName = app.appName,
+                        reason = reason,
+                        onClick = {
+                            val intent = Intent(
+                                Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                                Uri.fromParts("package", app.packageName, null)
+                            ).apply {
+                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            }
+                            context.startActivity(intent)
+                        },
+                    )
 
                     Spacer(modifier = Modifier.height(10.dp))
                 }
@@ -417,15 +584,18 @@ fun ThreatsScreen(apps: List<AppInfo>, modifier: Modifier) {
     }
 }
 @Composable
+@OptIn(ExperimentalMaterial3Api::class)
 fun ThreatCard(
     appName: String,
-    reason: String
+    reason: String,
+    onClick: () -> Unit,
 ) {
 
     Card(
         modifier = Modifier.fillMaxWidth(),
+        onClick = onClick,
         colors = CardDefaults.cardColors(
-            containerColor = Color(0xFFFFEBEE)
+            containerColor = MaterialTheme.colorScheme.errorContainer
         )
     ) {
 
@@ -449,7 +619,7 @@ fun ThreatCard(
 
                 Text(
                     text = reason,
-                    color = Color.Red
+                    color = MaterialTheme.colorScheme.onErrorContainer
                 )
             }
         }
@@ -457,65 +627,161 @@ fun ThreatCard(
 }
 @Composable
 fun ReportsScreen(apps: List<AppInfo>, modifier: Modifier) {
+    ReportsScreen(apps = apps, modifier = modifier, onScanSelected = {})
+}
 
-    val privacyScore = calculatePrivacyScore(apps)
+@Composable
+@OptIn(ExperimentalMaterial3Api::class)
+fun ReportsScreen(
+    apps: List<AppInfo>,
+    modifier: Modifier,
+    onScanSelected: (Long) -> Unit,
+) {
+    val context = LocalContext.current
+    val repo = remember(context) { ScanRepository.from(context) }
+    val scans by repo.scans.collectAsState(initial = emptyList())
 
-    val highRiskApps = apps.count { it.securityScore < 70 }
-
-    val riskyApps = apps
-        .sortedBy { it.securityScore }
-        .take(5)
+    val latest = scans.firstOrNull()
 
     LazyColumn(
-        modifier = modifier.padding(16.dp)
+        modifier = modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-
         item {
-
+            Text("Reports", style = MaterialTheme.typography.headlineSmall)
+            Spacer(modifier = Modifier.height(4.dp))
             Text(
-                text = "Security Report",
-                style = MaterialTheme.typography.headlineMedium
+                "Recent scans and trends",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-
-            Spacer(modifier = Modifier.height(20.dp))
-
-            PrivacyScoreCard(privacyScore)
-
-            Spacer(modifier = Modifier.height(20.dp))
-
-            QuickStats(
-                apps.size,
-                highRiskApps,
-                riskyApps.size
-            )
-
-            Spacer(modifier = Modifier.height(20.dp))
-
-            Text(
-                text = "Risk Distribution",
-                style = MaterialTheme.typography.titleMedium
-            )
-
-            Spacer(modifier = Modifier.height(10.dp))
-
-            RiskDistributionChart(apps)
-
-            Spacer(modifier = Modifier.height(20.dp))
-
-            Text(
-                text = "Top Risky Apps",
-                style = MaterialTheme.typography.titleMedium
-            )
-
-            Spacer(modifier = Modifier.height(10.dp))
         }
 
-        items(riskyApps) { app ->
+        if (latest == null) {
+            item {
+                EmptyState(
+                    title = "No scans yet",
+                    message = "Run a scan from Home to generate a report history.",
+                )
+            }
+        } else {
+            item {
+                ElevatedCard {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column {
+                                Text("Latest scan", style = MaterialTheme.typography.titleMedium)
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    "${latest.privacyScore} / 100",
+                                    style = MaterialTheme.typography.headlineSmall,
+                                )
+                            }
+                            val shareText = buildScanShareText(latest)
+                            IconButton(
+                                onClick = {
+                                    val sendIntent = Intent(Intent.ACTION_SEND).apply {
+                                        type = "text/plain"
+                                        putExtra(Intent.EXTRA_TEXT, shareText)
+                                    }
+                                    context.startActivity(Intent.createChooser(sendIntent, "Share report"))
+                                }
+                            ) {
+                                Icon(Icons.Filled.Share, contentDescription = "Share")
+                            }
+                        }
 
-            RiskyAppRow(app)
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            MetricChip("Apps", latest.appsScanned.toString())
+                            MetricChip("High risk", latest.highRiskApps.toString())
+                            MetricChip("Threats", latest.suspiciousApps.toString())
+                        }
 
-            Spacer(modifier = Modifier.height(8.dp))
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Text("Risk distribution", style = MaterialTheme.typography.titleSmall)
+                        Spacer(modifier = Modifier.height(8.dp))
+                        RiskDistributionChart(apps)
+                    }
+                }
+            }
+
+            item { Text("History", style = MaterialTheme.typography.titleMedium) }
+
+            items(scans, key = { it.id }) { scan ->
+                ElevatedCard(onClick = { onScanSelected(scan.id) }) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text("Score ${scan.privacyScore}", style = MaterialTheme.typography.titleMedium)
+                            Text(
+                                relativeTime(scan.timestampEpochMs),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            MetricChip("Apps", scan.appsScanned.toString())
+                            MetricChip("High risk", scan.highRiskApps.toString())
+                            MetricChip("Threats", scan.suspiciousApps.toString())
+                        }
+                    }
+                }
+            }
         }
+    }
+}
+
+@Composable
+private fun MetricChip(label: String, value: String) {
+    Card(
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+        ),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                label,
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text(value, style = MaterialTheme.typography.labelLarge)
+        }
+    }
+}
+
+private fun buildScanShareText(scan: ScanEntity): String {
+    return buildString {
+        appendLine("SentinelAI scan summary")
+        appendLine("Score: ${scan.privacyScore} / 100")
+        appendLine("Apps scanned: ${scan.appsScanned}")
+        appendLine("High risk apps: ${scan.highRiskApps}")
+        appendLine("Suspicious apps: ${scan.suspiciousApps}")
+    }.trim()
+}
+
+private fun relativeTime(timestampEpochMs: Long): String {
+    val diff = (System.currentTimeMillis() - timestampEpochMs).coerceAtLeast(0L)
+    val minutes = diff / 60000L
+    val hours = diff / 3600000L
+    val days = diff / 86400000L
+    return when {
+        minutes < 1 -> "Just now"
+        minutes < 60 -> "${minutes}m ago"
+        hours < 24 -> "${hours}h ago"
+        else -> "${days}d ago"
     }
 }
 @Composable
@@ -523,11 +789,9 @@ fun RiskyAppRow(app: AppInfo) {
 
     val color = when {
 
-        app.securityScore > 85 -> Color(0xFF4CAF50)
-
-        app.securityScore > 70 -> Color(0xFFFFC107)
-
-        else -> Color.Red
+        app.securityScore > 85 -> CalmSuccess
+        app.securityScore > 70 -> CalmWarning
+        else -> CalmDanger
     }
 
     Card(

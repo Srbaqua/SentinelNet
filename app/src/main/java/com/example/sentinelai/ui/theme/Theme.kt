@@ -10,21 +10,42 @@ import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.SideEffect
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
 
 private val DarkColorScheme = darkColorScheme(
-    primary = Purple80,
-    secondary = PurpleGrey80,
-    tertiary = Pink80
+    primary = Blue80,
+    secondary = Teal80,
+    tertiary = Indigo80,
+    onPrimary = Color(0xFF06233F),
+    onSecondary = Color(0xFF003736),
+    onTertiary = Color(0xFF1B1A5C),
+    background = AppBackgroundDark,
+    onBackground = Color(0xFFE6EEF8),
+    surface = AppSurfaceDark,
+    onSurface = Color(0xFFE6EEF8),
+    surfaceVariant = Color(0xFF1B2633),
+    onSurfaceVariant = Color(0xFFCAD6E5),
+    outline = AppOutlineDark
 )
 
 private val LightColorScheme = lightColorScheme(
-    primary = Purple40,
-    secondary = PurpleGrey40,
-    tertiary = Pink40
+    primary = Blue40,
+    secondary = Teal40,
+    tertiary = Indigo40,
+    onPrimary = Color(0xFFFFFFFF),
+    onSecondary = Color(0xFFFFFFFF),
+    onTertiary = Color(0xFFFFFFFF),
+    background = AppBackgroundLight,
+    onBackground = Color(0xFF0F1721),
+    surface = AppSurfaceLight,
+    onSurface = Color(0xFF0F1721),
+    surfaceVariant = Color(0xFFEAF0FA),
+    onSurfaceVariant = Color(0xFF334155),
+    outline = AppOutlineLight
 
     /* Other default colors to override
     background = Color(0xFFFFFBFE),
@@ -41,7 +62,7 @@ private val LightColorScheme = lightColorScheme(
 fun SentinelAITheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
     // Dynamic color is available on Android 12+
-    dynamicColor: Boolean = true,
+    dynamicColor: Boolean = false,
     content: @Composable () -> Unit
 ) {
     val colorScheme = when {
@@ -57,8 +78,8 @@ fun SentinelAITheme(
     if (!view.isInEditMode) {
         SideEffect {
             val window = (view.context as Activity).window
-            window.statusBarColor = colorScheme.primary.toArgb()
-            WindowCompat.getInsetsController(window, view).isAppearanceLightStatusBars = darkTheme
+            window.statusBarColor = colorScheme.surface.toArgb()
+            WindowCompat.getInsetsController(window, view).isAppearanceLightStatusBars = !darkTheme
         }
     }
 

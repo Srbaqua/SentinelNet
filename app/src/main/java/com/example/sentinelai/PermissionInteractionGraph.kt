@@ -116,7 +116,7 @@ fun PermissionInteractionGraph(permissions: List<String>) {
 
                     Text(
                         text = edge.risk,
-                        color = Color.Red
+                        color = MaterialTheme.colorScheme.error
                     )
                 }
             }

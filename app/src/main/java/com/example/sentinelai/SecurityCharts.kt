@@ -7,7 +7,7 @@ import com.github.mikephil.charting.charts.PieChart
 import com.github.mikephil.charting.data.PieEntry
 import com.github.mikephil.charting.data.PieDataSet
 import com.github.mikephil.charting.data.PieData
-import com.github.mikephil.charting.utils.ColorTemplate
+import android.graphics.Color as AColor
 
 @Composable
 fun RiskDistributionChart(apps: List<AppInfo>) {
@@ -29,13 +29,25 @@ fun RiskDistributionChart(apps: List<AppInfo>) {
 
             val dataSet = PieDataSet(entries, "Risk Distribution")
 
-            dataSet.colors = ColorTemplate.MATERIAL_COLORS.toList()
+            // Calm palette: danger / warning / safe
+            dataSet.colors = listOf(
+                AColor.parseColor("#B5484A"), // danger (muted red)
+                AColor.parseColor("#B57A1B"), // warning (muted amber)
+                AColor.parseColor("#2F8F6B")  // safe (muted green)
+            )
 
             val data = PieData(dataSet)
+            data.setValueTextSize(12f)
+            data.setValueTextColor(AColor.WHITE)
 
             chart.data = data
             chart.description.isEnabled = false
             chart.setEntryLabelTextSize(12f)
+            chart.setEntryLabelColor(AColor.WHITE)
+
+            chart.legend.isEnabled = true
+            chart.legend.textColor = AColor.WHITE
+            chart.legend.textSize = 12f
 
             chart.layoutParams =
                 ViewGroup.LayoutParams(
