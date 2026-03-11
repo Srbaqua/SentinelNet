@@ -9,6 +9,21 @@ object SuspiciousAppDetector {
         for (app in apps) {
 
             val perms = app.permissions
+            val intel = app.threatIntel
+
+            if (intel != null && intel.status == ThreatIntelStatus.Malicious) {
+                suspiciousApps.add(
+                    app to "Known malware signature detected (${intel.maliciousDetections} engines)"
+                )
+                continue
+            }
+
+            if (intel != null && intel.status == ThreatIntelStatus.Suspicious) {
+                suspiciousApps.add(
+                    app to "Suspicious hash reputation (${intel.suspiciousDetections} engines)"
+                )
+                continue
+            }
 
             if (
                 perms.any { it.contains("LOCATION") } &&

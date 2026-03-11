@@ -5,6 +5,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Apps
 import androidx.compose.material.icons.filled.Assessment
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.CenterAlignedTopAppBar
@@ -24,8 +25,11 @@ import com.example.sentinelai.navigation.AppNavHost
 import com.example.sentinelai.navigation.Routes
 
 @Composable
-fun MainScreen(apps: List<AppInfo>) {
-    MainScaffold(apps = apps)
+fun MainScreen(
+    apps: List<AppInfo>,
+    onRescan: suspend () -> List<AppInfo>,
+) {
+    MainScaffold(apps = apps, onRescan = onRescan)
 }
 
 private data class BottomNavItem(
@@ -36,7 +40,10 @@ private data class BottomNavItem(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun MainScaffold(apps: List<AppInfo>) {
+private fun MainScaffold(
+    apps: List<AppInfo>,
+    onRescan: suspend () -> List<AppInfo>,
+) {
     val navController = rememberNavController()
     val backStackEntry = navController.currentBackStackEntryAsState().value
     val currentRoute = backStackEntry?.destination?.route
@@ -62,6 +69,11 @@ private fun MainScaffold(apps: List<AppInfo>) {
             label = "Reports",
             icon = { Icon(Icons.Filled.Assessment, contentDescription = null) },
         ),
+        BottomNavItem(
+            route = Routes.Ghost,
+            label = "Ghost",
+            icon = { Icon(Icons.Filled.Search, contentDescription = null) },
+        ),
     )
 
     val isBottomBarVisible = currentRoute in setOf(
@@ -69,6 +81,7 @@ private fun MainScaffold(apps: List<AppInfo>) {
         Routes.Apps,
         Routes.Threats,
         Routes.Reports,
+        Routes.Ghost,
     )
 
     val title = when (currentRoute) {
@@ -76,6 +89,7 @@ private fun MainScaffold(apps: List<AppInfo>) {
         Routes.Apps -> "Installed apps"
         Routes.Threats -> "Threat center"
         Routes.Reports -> "Reports"
+        Routes.Ghost -> "Ghost connections"
         Routes.Settings -> "Settings"
         Routes.AppDetailsRoute -> "App details"
         else -> "SentinelAI"
@@ -122,6 +136,7 @@ private fun MainScaffold(apps: List<AppInfo>) {
         AppNavHost(
             navController = navController,
             apps = apps,
+            onRescan = onRescan,
             modifier = Modifier.padding(padding),
             startDestination = Routes.Home,
         )

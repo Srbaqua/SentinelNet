@@ -22,14 +22,14 @@ import com.example.sentinelai.settings.ThemeMode
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.platform.LocalContext
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.flow.first
 
 class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
-        val scanner = AppScanner(this)
-        val apps = scanner.getInstalledApps()
 
         setContent {
             val context = LocalContext.current
@@ -43,7 +43,30 @@ class MainActivity : ComponentActivity() {
                 ThemeMode.Dark -> true
             }
 
-            SentinelAITheme(darkTheme = darkTheme) { MainScreen(apps) }
+            val scanner = remember(context) { AppScanner(context) }
+            val threatIntelScanner = remember(context) { ThreatIntelScanner(context) }
+            var apps by remember { mutableStateOf(scanner.getInstalledApps()) }
+
+            suspend fun rescan(): List<AppInfo> {
+                val baseApps = withContext(Dispatchers.IO) { scanner.getInstalledApps() }
+                val apiKey = store.virusTotalApiKey.first()
+
+                val scannedApps = if (apiKey.isBlank()) {
+                    baseApps
+                } else {
+                    threatIntelScanner.enrichAppsWithThreatIntel(baseApps, apiKey)
+                }
+
+                apps = scannedApps
+                return scannedApps
+            }
+
+            SentinelAITheme(darkTheme = darkTheme) {
+                MainScreen(
+                    apps = apps,
+                    onRescan = { rescan() },
+                )
+            }
         }
     }
 }
@@ -114,6 +137,34 @@ fun AppDetailScreen(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+
+                    app.threatIntel?.let { intel ->
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = when (intel.status) {
+                                ThreatIntelStatus.Malicious -> "Threat intel: malware signature match"
+                                ThreatIntelStatus.Suspicious -> "Threat intel: suspicious reputation"
+                                ThreatIntelStatus.Clean -> "Threat intel: no detections"
+                                ThreatIntelStatus.NotFound -> "Threat intel: hash not found in database"
+                                ThreatIntelStatus.RateLimited -> "Threat intel: API rate limited"
+                                ThreatIntelStatus.Error -> "Threat intel: scan error"
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (intel.status == ThreatIntelStatus.Malicious) {
+                                MaterialTheme.colorScheme.error
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                        )
+                        if (intel.sha256.isNotBlank()) {
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = "SHA-256: ${intel.sha256.take(18)}...",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
 
                     Spacer(modifier = Modifier.height(12.dp))
 

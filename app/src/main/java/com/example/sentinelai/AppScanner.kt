@@ -1,14 +1,15 @@
 package com.example.sentinelai
 
 import android.content.Context
-import android.content.pm.PackageInfo
+import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 
 data class AppInfo(
     val appName: String,
     val packageName: String,
     val permissions: List<String>,
-    val securityScore: Int
+    val securityScore: Int,
+    val threatIntel: ThreatIntelResult? = null,
 )
 
 class AppScanner(private val context: Context) {
@@ -22,10 +23,15 @@ class AppScanner(private val context: Context) {
 
         for (pkg in packages) {
 
+            // Keep scan focused on user-installed packages only.
+            if ((pkg.applicationInfo.flags and ApplicationInfo.FLAG_SYSTEM) != 0) {
+                continue
+            }
+
             val appName = pkg.applicationInfo.loadLabel(pm).toString()
             val packageName = pkg.packageName
 
-            val permissions = grantedPermissionsFor(pkg)
+            val permissions = grantedPermissionsFor(pm, pkg)
 
             val score = RiskAnalyzer.calculateRiskScore(permissions)
 
@@ -42,18 +48,10 @@ class AppScanner(private val context: Context) {
         return appList
     }
 
-    private fun grantedPermissionsFor(pkg: PackageInfo): List<String> {
+    private fun grantedPermissionsFor(pm: PackageManager, pkg: android.content.pm.PackageInfo): List<String> {
         val requested = pkg.requestedPermissions ?: return emptyList()
-        val flags = pkg.requestedPermissionsFlags ?: return emptyList()
-
-        val granted = mutableListOf<String>()
-        for (i in requested.indices) {
-            val perm = requested[i]
-            val flag = flags.getOrNull(i) ?: 0
-            if ((flag and PackageInfo.REQUESTED_PERMISSION_GRANTED) != 0) {
-                granted.add(perm)
-            }
+        return requested.filter { perm ->
+            pm.checkPermission(perm, pkg.packageName) == PackageManager.PERMISSION_GRANTED
         }
-        return granted
     }
 }

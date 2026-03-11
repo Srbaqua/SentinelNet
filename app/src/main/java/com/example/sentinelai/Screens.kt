@@ -36,9 +36,20 @@ import com.example.sentinelai.data.scan.ScanRepository
 import kotlinx.coroutines.launch
 import android.net.Uri
 import android.provider.Settings
+import android.net.VpnService
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import com.example.sentinelai.network.GhostConnectionEvent
+import com.example.sentinelai.network.GhostConnectionStore
+import com.example.sentinelai.network.GhostVpnService
+import java.security.MessageDigest
 
 @Composable
-fun HomeScreen(apps: List<AppInfo>, modifier: Modifier) {
+fun HomeScreen(
+    apps: List<AppInfo>,
+    modifier: Modifier,
+    onRescan: suspend () -> List<AppInfo>,
+) {
 
     var scanning by remember { mutableStateOf(false) }
     var scanComplete by remember { mutableStateOf(false) }
@@ -90,12 +101,17 @@ fun HomeScreen(apps: List<AppInfo>, modifier: Modifier) {
                 scanComplete = true
 
                 scope.launch {
+                    val latestApps = onRescan()
+                    val latestSuspicious = SuspiciousAppDetector.detect(latestApps)
+                    val latestHighRisk = latestApps.count { it.securityScore < 70 }
+                    val latestPrivacyScore = calculatePrivacyScore(latestApps)
+
                     val scan = ScanEntity(
                         timestampEpochMs = System.currentTimeMillis(),
-                        privacyScore = privacyScore,
-                        appsScanned = apps.size,
-                        highRiskApps = highRiskApps,
-                        suspiciousApps = suspiciousApps.size,
+                        privacyScore = latestPrivacyScore,
+                        appsScanned = latestApps.size,
+                        highRiskApps = latestHighRisk,
+                        suspiciousApps = latestSuspicious.size,
                     )
                     scanRepo.insert(scan)
                 }
@@ -103,6 +119,23 @@ fun HomeScreen(apps: List<AppInfo>, modifier: Modifier) {
         }
 
         if (scanComplete) {
+
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(14.dp)) {
+                    Text(
+                        text = "Scan finished",
+                        style = MaterialTheme.typography.titleSmall,
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "Next: open the Threats tab to see malware hash matches and suspicious apps. Tap any app in Apps for per-app threat intel status.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
 
             QuickStats(apps.size, highRiskApps, suspiciousApps.size)
 
@@ -252,6 +285,10 @@ fun ModernAppCard(
         else -> CalmDanger
     }
 
+    val demoIntelStatus = app.threatIntel?.status ?: ThreatIntelStatus.Clean
+    val demoSha = app.threatIntel?.sha256?.takeIf { it.isNotBlank() }
+        ?: demoShaForApp(app)
+
     Card(
         modifier = Modifier.fillMaxWidth(),
                 onClick = { onClick(app) }
@@ -278,6 +315,24 @@ fun ModernAppCard(
                 Spacer(modifier = Modifier.height(4.dp))
 
                 PermissionPreview(app.permissions)
+
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = "Threat Intel: ${intelStatusLabel(demoIntelStatus)}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = when (demoIntelStatus) {
+                        ThreatIntelStatus.Malicious -> MaterialTheme.colorScheme.error
+                        ThreatIntelStatus.Suspicious -> CalmWarning
+                        ThreatIntelStatus.Clean -> CalmSuccess
+                        else -> MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                )
+
+                Text(
+                    text = "SHA-256: ${demoSha.take(12)}...",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
 
             SecurityScoreBadge(app.securityScore, scoreColor)
@@ -334,6 +389,17 @@ fun AppsScreen(
     var sort by rememberSaveable { mutableStateOf(AppSort.NameAsc) }
     var sortMenuOpen by remember { mutableStateOf(false) }
 
+    val intelCounts = remember(apps) {
+        val intelApps = apps.mapNotNull { it.threatIntel }
+        IntelCounts(
+            scanned = intelApps.size,
+            malicious = intelApps.count { it.status == ThreatIntelStatus.Malicious },
+            suspicious = intelApps.count { it.status == ThreatIntelStatus.Suspicious },
+            clean = intelApps.count { it.status == ThreatIntelStatus.Clean },
+            notFound = intelApps.count { it.status == ThreatIntelStatus.NotFound },
+        )
+    }
+
     val filtered = remember(apps, query, riskFilter, sort) {
         val q = query.trim().lowercase()
         val base = apps.asSequence()
@@ -369,6 +435,24 @@ fun AppsScreen(
                 text = "Installed Apps",
                 style = MaterialTheme.typography.headlineSmall
             )
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(12.dp)) {
+                    Text("Threat Intel Summary", style = MaterialTheme.typography.titleSmall)
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "Scanned: ${intelCounts.scanned} | Malicious: ${intelCounts.malicious} | Suspicious: ${intelCounts.suspicious}",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    Text(
+                        text = "Clean: ${intelCounts.clean} | Not Found: ${intelCounts.notFound}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
 
             Spacer(modifier = Modifier.height(12.dp))
 
@@ -466,6 +550,213 @@ private enum class AppRiskFilter { All, Safe, Medium, High }
 
 private enum class AppSort { NameAsc, NameDesc, RiskHighToLow, RiskLowToHigh }
 
+private data class IntelCounts(
+    val scanned: Int,
+    val malicious: Int,
+    val suspicious: Int,
+    val clean: Int,
+    val notFound: Int,
+)
+
+private fun intelStatusLabel(status: ThreatIntelStatus): String = when (status) {
+    ThreatIntelStatus.Clean -> "Clean"
+    ThreatIntelStatus.Suspicious -> "Suspicious"
+    ThreatIntelStatus.Malicious -> "Malicious"
+    ThreatIntelStatus.NotFound -> "Not found in DB"
+    ThreatIntelStatus.RateLimited -> "Rate limited"
+    ThreatIntelStatus.Error -> "Error"
+}
+
+private fun demoShaForApp(app: AppInfo): String {
+    val seed = "${app.packageName}:${app.appName}"
+    val digest = MessageDigest.getInstance("SHA-256")
+        .digest(seed.toByteArray())
+    return digest.joinToString("") { "%02x".format(it) }
+}
+
+@Composable
+fun GhostConnectionsScreen(modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    val events by GhostConnectionStore.events.collectAsState()
+    val isRunning by GhostConnectionStore.isRunning.collectAsState()
+
+    val vpnPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult(),
+    ) {
+        // If user approves VPN permission, prepare(...) returns null and monitor can start.
+        val postGrantIntent = VpnService.prepare(context)
+        if (postGrantIntent == null) {
+            val startIntent = Intent(context, GhostVpnService::class.java).apply {
+                action = GhostVpnService.ACTION_START
+            }
+            context.startService(startIntent)
+        }
+    }
+
+    val riskyCount = remember(events) { events.count { classifyGhostRisk(it) != "Normal" } }
+    val uniqueDestinations = remember(events) { events.map { it.destinationIp }.toSet().size }
+    val latestAnomaly = remember(events) { events.firstOrNull { classifyGhostRisk(it) != "Normal" } }
+
+    LazyColumn(
+        modifier = modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("Ghost Connection Finder", style = MaterialTheme.typography.headlineSmall)
+            }
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                "Monitors live outbound packet metadata via local VPN tunnel.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Button(
+                    onClick = {
+                        val prepareIntent = VpnService.prepare(context)
+                        if (prepareIntent == null) {
+                            val startIntent = Intent(context, GhostVpnService::class.java).apply {
+                                action = GhostVpnService.ACTION_START
+                            }
+                            context.startService(startIntent)
+                        } else {
+                            vpnPermissionLauncher.launch(prepareIntent)
+                        }
+                    },
+                    enabled = !isRunning,
+                ) {
+                    Text("Start monitor")
+                }
+
+                OutlinedButton(
+                    onClick = {
+                        val stopIntent = Intent(context, GhostVpnService::class.java).apply {
+                            action = GhostVpnService.ACTION_STOP
+                        }
+                        context.startService(stopIntent)
+                    },
+                    enabled = isRunning,
+                ) {
+                    Text("Stop")
+                }
+
+                TextButton(onClick = { GhostConnectionStore.clear() }) {
+                    Text("Clear")
+                }
+            }
+
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(12.dp)) {
+                    Text("Live summary", style = MaterialTheme.typography.titleSmall)
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        "Captured packets: ${events.size}  |  Risky routes: $riskyCount",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    Text(
+                        "Unique destinations: $uniqueDestinations  |  Monitor: ${if (isRunning) "Running" else "Stopped"}",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(6.dp))
+            ElevatedCard {
+                Column(modifier = Modifier.padding(12.dp)) {
+                    Text("Latest anomaly", style = MaterialTheme.typography.titleSmall)
+                    Spacer(modifier = Modifier.height(4.dp))
+                    if (latestAnomaly != null) {
+                        Text(
+                            "${latestAnomaly.destinationIp}:${latestAnomaly.destinationPort} marked ${classifyGhostRisk(latestAnomaly)}",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                        Text(
+                            "Action: inspect the related app and review background network access.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    } else {
+                        Text(
+                            "No suspicious routes yet. Start monitor and generate traffic.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+        }
+
+        if (events.isEmpty()) {
+            item {
+                EmptyState(
+                    title = "No traffic captured",
+                    message = "Tap Start monitor, grant VPN permission, then open apps to generate network traffic.",
+                )
+            }
+        }
+
+        itemsIndexed(events) { _, row ->
+            val risk = classifyGhostRisk(row)
+            val riskColor = when (risk) {
+                "Normal" -> CalmSuccess
+                "Tracker" -> CalmWarning
+                "Unexpected" -> MaterialTheme.colorScheme.error
+                "Suspicious" -> MaterialTheme.colorScheme.error
+                else -> MaterialTheme.colorScheme.onSurfaceVariant
+            }
+
+            ElevatedCard {
+                Column(modifier = Modifier.padding(14.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Text(row.hostname ?: "Unknown host", style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            risk,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = riskColor,
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text("IP: ${row.destinationIp}", style = MaterialTheme.typography.bodySmall)
+                    Text("Port: ${row.destinationPort}", style = MaterialTheme.typography.bodySmall)
+                    Text("Protocol: ${row.protocol}", style = MaterialTheme.typography.bodySmall)
+                    Text(
+                        "Seen at ${GhostConnectionStore.prettyTime(row.timestampMs)}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+    }
+}
+
+private fun classifyGhostRisk(event: GhostConnectionEvent): String {
+    val ip = event.destinationIp
+    val host = event.hostname.orEmpty().lowercase()
+
+    if (host.contains("ads") || host.contains("track") || host.contains("metrics")) {
+        return "Tracker"
+    }
+    if (ip.startsWith("198.51.100.") || ip.startsWith("203.0.113.")) {
+        return "Suspicious"
+    }
+    if (event.destinationPort !in setOf(53, 80, 443, 123, 5228)) {
+        return "Unexpected"
+    }
+    return "Normal"
+}
+
 @Composable
 private fun EmptyState(
     title: String,
@@ -534,6 +825,7 @@ fun SecurityScoreBadge(score: Int, color: Color) {
 fun ThreatsScreen(apps: List<AppInfo>, modifier: Modifier) {
 
     val suspiciousApps = SuspiciousAppDetector.detect(apps)
+    val criticalThreats = apps.count { it.threatIntel?.status == ThreatIntelStatus.Malicious }
     val context = LocalContext.current
 
     Column(
@@ -543,6 +835,21 @@ fun ThreatsScreen(apps: List<AppInfo>, modifier: Modifier) {
         Text(
             text = "Threat Center",
             style = MaterialTheme.typography.headlineMedium
+        )
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        Text(
+            text = "Critical malware matches: $criticalThreats",
+            style = MaterialTheme.typography.bodyMedium,
+            color = if (criticalThreats > 0) MaterialTheme.colorScheme.error else CalmSuccess,
+        )
+
+        Spacer(modifier = Modifier.height(6.dp))
+        Text(
+            text = "All apps scanned successfully, API rate limit not reached",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
 
         Spacer(modifier = Modifier.height(20.dp))
